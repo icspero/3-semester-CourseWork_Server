@@ -49,7 +49,7 @@ string add_first_admin(connection &C) {
         answer = "Администратор admin1 успешно создан!\n";
     } catch (const exception &e) {
         W.abort();
-        answer = "Ошибка создания администратора: " + string(e.what()) + ".\n";
+        answer = "Ошибка создания администратора: " + string(e.what()) + "\n";
     }
 
     return answer;
@@ -79,7 +79,7 @@ string add_user(connection &C, const string &login, const string &password, cons
         answer = "Пользователь " + login + " успешно создан!\n";
     } catch (const exception &e) {
         W.abort();
-        answer = "Ошибка создания пользователя: " + string(e.what()) + ".\n";
+        answer = "Ошибка создания пользователя: " + string(e.what()) + "\n";
     }
 
     return answer;
@@ -104,7 +104,7 @@ string authenticate_user(connection &C, const string &login, const string &passw
         string db_hash = R1[0][0].as<string>();
         int role_id = R1[0][1].as<int>();
 
-        string check_role = "SELECT role_name FROM roles WHERE role_id = " + W.quote(role_id) + ";";
+        string check_role = "SELECT role_name FROM roles WHERE id = " + W.quote(role_id) + ";";
         result R2 = W.exec(check_role);
         string role_name = R2[0][0].as<string>();
 
@@ -118,7 +118,7 @@ string authenticate_user(connection &C, const string &login, const string &passw
         W.commit();
     } catch (const exception &e) {
         W.abort();
-        answer = "Ошибка при аутентификации пользователя: " + string(e.what()) + ".\n";
+        answer = "Ошибка при аутентификации пользователя: " + string(e.what()) + "\n";
     }
 
     return answer;
@@ -141,7 +141,7 @@ string change_user_role(connection &C, const string &login, const string &new_ro
         }
         
         int role_id = R[0][0].as<int>();
-        string check_role = "SELECT role_name FROM roles WHERE role_id = " + W.quote(role_id) + ";";
+        string check_role = "SELECT role_name FROM roles WHERE id = " + W.quote(role_id) + ";";
         result R2 = W.exec(check_sql);
         string current_role = R2[0][0].as<string>();
         
@@ -159,7 +159,7 @@ string change_user_role(connection &C, const string &login, const string &new_ro
         answer = "Роль пользователя успешно изменена на '" + new_role + "'!\n";
     } catch (const exception &e) {
         W.abort();
-        answer = "Ошибка при изменении роли пользователя: " + string(e.what()) + ".\n";
+        answer = "Ошибка при изменении роли пользователя: " + string(e.what()) + "\n";
     }
     
     return answer;
@@ -170,14 +170,14 @@ string add_topic(connection &C, const string &cipher_name, const string &descrip
     string answer;
     work W(C);
 
-    // Проверяем, есть ли уже топик с таким cipher_name
+    // Проверяем, есть ли уже тема с таким cipher_name
     string check_query = "SELECT COUNT(*) FROM topics WHERE cipher_name = " + W.quote(cipher_name) + ";";
 
     result R = W.exec(check_query);
     int topic_exists = R[0][0].as<int>();
 
     if (topic_exists > 0) {
-        answer = "Топик '" + cipher_name + "' уже существует!\n";
+        answer = "Тема '" + cipher_name + "' уже существует!\n";
         W.commit();
         return answer;
     }
@@ -192,11 +192,11 @@ string add_topic(connection &C, const string &cipher_name, const string &descrip
     try {
         W.exec(insert_query);
         W.commit();
-        answer = "Топик '" + cipher_name + "' успешно добавлен!\n";
+        answer = "Тема '" + cipher_name + "' успешно добавлена!\n";
     }
     catch (const exception &e) {
         W.abort();
-        answer = "Ошибка добавления топика: " + string(e.what()) + "\n";
+        answer = "Ошибка добавления темы: " + string(e.what()) + "\n";
     }
 
     return answer;
@@ -208,14 +208,14 @@ string delete_topic(connection &C, const string &cipher_name) {
     work W(C);
 
     try {
-        // Проверяем, существует ли топик
+        // Проверяем, существует ли тема
         string check_query =
             "SELECT id FROM topics WHERE cipher_name = " + W.quote(cipher_name) + ";";
 
         result R = W.exec(check_query);
 
         if (R.empty()) {
-            answer = "Топик '" + cipher_name + "' не найден!\n";
+            answer = "Тема '" + cipher_name + "' не найдена!\n";
             W.commit();
             return answer;
         }
@@ -227,11 +227,11 @@ string delete_topic(connection &C, const string &cipher_name) {
         W.exec(delete_query);
         W.commit();
 
-        answer = "Топик '" + cipher_name + "' успешно удалён!\n";
+        answer = "Тема '" + cipher_name + "' успешна удалена!\n";
     }
     catch (const exception &e) {
         W.abort();
-        answer = "Ошибка удаления топика: " + string(e.what()) + ".\n";
+        answer = "Ошибка удаления темы: " + string(e.what()) + "\n";
     }
 
     return answer;
@@ -287,7 +287,7 @@ string add_task(connection &C, const string &cipher_name, const string &question
 
     } catch (const exception &e) {
         W.abort();
-        answer = "Ошибка добавления задания: " + string(e.what()) + ".\n";
+        answer = "Ошибка добавления задания: " + string(e.what()) + "\n";
     }
 
     return answer;
@@ -328,7 +328,7 @@ string get_tasks_for_topic(connection &C, const string &cipher_name) {
 
     } catch (const exception &e) {
         W.abort();
-        resultStream << "Ошибка получения заданий: " << e.what() << ".\n";
+        resultStream << "Ошибка получения заданий: " << e.what() << "\n";
     }
 
     return resultStream.str();
@@ -357,7 +357,7 @@ string delete_task(connection &C, int task_id) {
 
     } catch (const exception &e) {
         W.abort();
-        answer = "Ошибка при удалении задания: " + string(e.what()) + ".\n";
+        answer = "Ошибка при удалении задания: " + string(e.what()) + "\n";
     }
 
     return answer;
@@ -380,7 +380,7 @@ string get_task(connection &C, int task_id) {
         W.commit();
     } catch (const exception &e) {
         W.abort();
-        resultStream << "Ошибка получения задания: " << e.what() << ".\n";
+        resultStream << "Ошибка получения задания: " << e.what() << "\n";
     }
 
     return resultStream.str();
@@ -400,6 +400,7 @@ string before_login(){
 }
 
 string communicate_with_client(string& message, int client_socket_fd){
+    if (!message.empty() && message.back() == '\n') message.pop_back();
     string result;
     stringstream ss(message);
     string command;
@@ -422,6 +423,15 @@ string communicate_with_client(string& message, int client_socket_fd){
             getline(ss, login, '|');
             getline(ss, passwd, '|');
             result = authenticate_user(C, login, passwd);
+        }
+        else if (command == "addtopic") {
+            string cipher;
+            string description;
+            string theory;
+            getline(ss, cipher, '|');
+            getline(ss, description, '|');
+            getline(ss, theory, '|');
+            result = add_topic(C, cipher, description, theory);
         }
         /*
         else if (command == "change") {
@@ -496,7 +506,7 @@ string communicate_with_client(string& message, int client_socket_fd){
             result = "Ошибка: неизвестная команда!\n";
         }
     } catch (const exception &e) {
-            cerr << e.what() << std::endl;
+            cerr << e.what() << endl;
             result = "Ошибка: проблема с подключением к базе данных!\n";
         }
     return result;
