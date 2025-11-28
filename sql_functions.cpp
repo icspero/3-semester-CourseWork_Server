@@ -95,7 +95,7 @@ string authenticate_user(connection &C, const string &login, const string &passw
         result R1 = W.exec(check);
 
         if (R1.empty()) {
-            answer = "Пользователь " + login + " с таким логином не найден!\n";
+            answer = "Пользователь с логином " + login + " не существует!\n";
             W.commit();
             return answer;
         }
@@ -135,14 +135,14 @@ string change_user_role(connection &C, const string &login, const string &new_ro
         result R = W.exec(check_sql);
         
         if (R.empty()) {
-            answer = "Пользователь с таким логином не найден.\n";
+            answer = "Пользователь с таким логином не найден!\n";
             W.commit();
             return answer;
         }
         
-        int role_id = R[0][0].as<int>();
+        int role_id = R[0][0].as<int>(); // текущая роль пользователя
         string check_role = "SELECT role_name FROM roles WHERE id = " + W.quote(role_id) + ";";
-        result R2 = W.exec(check_sql);
+        result R2 = W.exec(check_role);
         string current_role = R2[0][0].as<string>();
         
         if (current_role == new_role) {
@@ -150,9 +150,13 @@ string change_user_role(connection &C, const string &login, const string &new_ro
             W.commit();
             return answer;
         }
-        
+
+        string check_new_role_id = "SELECT id FROM roles WHERE role_name = " + W.quote(new_role) + ";";
+        result R3 = W.exec(check_new_role_id);
+        string new_role_id = R3[0][0].as<string>();
+
         // Обновляем роль
-        string update_sql = "UPDATE users SET user_role = " + W.quote(new_role) + " WHERE user_login = " + W.quote(login) + ";";
+        string update_sql = "UPDATE users SET role_id = " + W.quote(new_role_id) + " WHERE login = " + W.quote(login) + ";";
         W.exec(update_sql);
         W.commit();
         
@@ -170,26 +174,41 @@ string add_topic(connection &C, const string &cipher_name, const string &descrip
     string answer;
     work W(C);
 
-    // Проверяем, есть ли уже тема с таким cipher_name
-    string check_query = "SELECT COUNT(*) FROM topics WHERE cipher_name = " + W.quote(cipher_name) + ";";
-
-    result R = W.exec(check_query);
-    int topic_exists = R[0][0].as<int>();
-
-    if (topic_exists > 0) {
-        answer = "Тема '" + cipher_name + "' уже существует!\n";
-        W.commit();
-        return answer;
-    }
-
-    // Формируем запрос на вставку
-    string insert_query =
-        "INSERT INTO topics (cipher_name, description, theory) VALUES ("
-        + W.quote(cipher_name) + ", "
-        + W.quote(description) + ", "
-        + W.quote(theory) + ");";
-
     try {
+        // Проверяем, есть ли уже тема с таким cipher_name и получаем текущие поля
+        string check_query = "SELECT description, theory FROM topics WHERE cipher_name = " + W.quote(cipher_name) + ";";
+        result R = W.exec(check_query);
+
+        if (!R.empty()) {
+            string current_description = R[0]["description"].c_str();
+            string current_theory = R[0]["theory"].c_str();
+
+            // Сравниваем
+            if (current_description != description || current_theory != theory) {
+                // Обновляем только если данные отличаются
+                string update_query = 
+                    "UPDATE topics SET "
+                    "description = " + W.quote(description) + ", "
+                    "theory = " + W.quote(theory) + " "
+                    "WHERE cipher_name = " + W.quote(cipher_name) + ";";
+
+                W.exec(update_query);
+                W.commit();
+                answer = "Тема '" + cipher_name + "' уже существует, данные обновлены!\n";
+            } else {
+                answer = "Тема '" + cipher_name + "' уже существует, изменений нет.\n";
+                W.commit();
+            }
+            return answer;
+        }
+
+        // Если темы нет, то вставляем новую
+        string insert_query =
+            "INSERT INTO topics (cipher_name, description, theory) VALUES ("
+            + W.quote(cipher_name) + ", "
+            + W.quote(description) + ", "
+            + W.quote(theory) + ");";
+
         W.exec(insert_query);
         W.commit();
         answer = "Тема '" + cipher_name + "' успешно добавлена!\n";
@@ -304,6 +323,11 @@ string get_tasks_for_topic(connection &C, const string &cipher_name) {
             "SELECT id FROM topics WHERE cipher_name = " + W.quote(cipher_name) + ";";
         result R_topic = W.exec(find_topic_sql);
 
+        if (cipher_name == "Темы не найдены!") {
+            resultStream << "Отсутствуют темы!\n";
+            W.commit();
+            return resultStream.str();
+        }
         if (R_topic.empty()) {
             resultStream << "Тема '" << cipher_name << "' не найдена!\n";
             W.commit();
@@ -386,6 +410,56 @@ string get_task(connection &C, int task_id) {
     return resultStream.str();
 }
 
+string get_roles(connection &C) {
+    stringstream resultStream;
+    work W(C);
+
+    try {
+        string sql = "SELECT role_name FROM roles;";
+        result R = W.exec(sql);
+
+        if (R.empty()) {
+            resultStream << "Роли отсутствуют!\n";
+        } else {
+            for (const auto &row : R) {
+                resultStream << row[0].as<string>() << "\n";
+            }
+        }
+
+        W.commit();
+    } catch (const exception &e) {
+        W.abort();
+        resultStream << "Ошибка получения ролей: " << e.what() << "\n";
+    }
+
+    return resultStream.str();
+}
+
+string get_users(connection &C) {
+    stringstream resultStream;
+    work W(C);
+
+    try {
+        string sql = "SELECT login FROM users;";
+        result R = W.exec(sql);
+
+        if (R.empty()) {
+            resultStream << "Пользователи отсутствуют!\n";
+        } else {
+            for (const auto &row : R) {
+                resultStream << row[0].as<string>() << "\n";
+            }
+        }
+
+        W.commit();
+    } catch (const exception &e) {
+        W.abort();
+        resultStream << "Ошибка получения пользователей: " << e.what() << "\n";
+    }
+
+    return resultStream.str();
+}
+
 string before_login(){
     string result;
     try{
@@ -404,7 +478,7 @@ string communicate_with_client(string& message, int client_socket_fd){
     string result;
     stringstream ss(message);
     string command;
-    // Разделяем сообщение по разделителю '|'
+    // Разделяем сообщение по '|'
     getline(ss, command, '|');
     try {
         connection C("dbname=coursework user=postgres password=root host=localhost port=5432");
@@ -433,14 +507,47 @@ string communicate_with_client(string& message, int client_socket_fd){
             getline(ss, theory, '|');
             result = add_topic(C, cipher, description, theory);
         }
-        /*
-        else if (command == "change") {
+        else if (command == "deletetopic") {
+            string cipher;
+            getline(ss, cipher, '|');
+            result = delete_topic(C, cipher);
+        }
+        else if (command == "get_topics") {
+            result = get_all_topics(C);
+        }
+        else if (command == "get_roles") {
+            result = get_roles(C);
+        }
+        else if (command == "get_users") {
+            result = get_users(C);
+        }
+        else if (command == "addtask") {
+            string cipher;
+            string task;
+            string answer;
+            getline(ss, cipher, '|');
+            getline(ss, task, '|');
+            getline(ss, answer, '|');
+            result = add_task(C, cipher, task, answer);
+        }
+        else if (command == "get_tasks") {
+            string cipher;
+            getline(ss, cipher, '|');
+            result = get_tasks_for_topic(C, cipher);
+        }
+        else if (command == "deletetask") {
+            string task_id;
+            getline(ss, task_id, '|');
+            result = delete_task(C, stoi(task_id));
+        }
+        else if (command == "changerole") {
             string username;
             string userrole;
             getline(ss, username, '|');
             getline(ss, userrole, '|');
             result = change_user_role(C, username, userrole);
         }
+        /*
         else if (command == "1") {
             string shopName;
             string shopAddress;
