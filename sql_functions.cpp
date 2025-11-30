@@ -56,7 +56,7 @@ string add_first_admin(connection &C) {
 }
 
 // Функция создания пользователей
-string add_user(connection &C, const string &login, const string &password, const int &role) {
+string add_user(connection &C, const string &login, const string &password) {
     string answer;
     work W(C);
 
@@ -70,8 +70,12 @@ string add_user(connection &C, const string &login, const string &password, cons
         return answer;
     }
 
+    string get_role = "SELECT id FROM roles WHERE role_name = 'Посетитель';";
+    result R2 = W.exec(get_role);
+    int role_id = R2[0][0].as<int>();
+
     string passwd_hash = sha256(password);
-    string insert_query = "INSERT INTO users (role_id, login, passwd_hash) VALUES (" + to_string(role) + ", " + W.quote(login) + ", " + W.quote(passwd_hash) + ");";
+    string insert_query = "INSERT INTO users (role_id, login, passwd_hash) VALUES (" + to_string(role_id) + ", " + W.quote(login) + ", " + W.quote(passwd_hash) + ");";
 
     try {
         W.exec(insert_query);
@@ -387,24 +391,26 @@ string delete_task(connection &C, int task_id) {
     return answer;
 }
 
-string get_task(connection &C, int task_id) {
+string get_roles_for_users(connection &C) {
     stringstream resultStream;
     work W(C);
 
     try {
-        string sql = "SELECT question FROM tasks WHERE id = " + to_string(task_id) + ";";
+        string sql = "SELECT u.login, r.role_name FROM users u JOIN roles r ON u.role_id = r.id;";
         result R = W.exec(sql);
 
         if (R.empty()) {
-            resultStream << "Задание с ID " << task_id << " не найдено!\n";
+            resultStream << "Пользователи отсутствуют!\n";
         } else {
-            resultStream << "Вопрос: " << R[0][0].as<string>() << "\n";
+            for (const auto &row : R) {
+                resultStream <<  "Логин: " << row[0].as<string>() << " <> Роль: " << row[1].as<string>() << "\n";
+            }
         }
 
         W.commit();
     } catch (const exception &e) {
         W.abort();
-        resultStream << "Ошибка получения задания: " << e.what() << "\n";
+        resultStream << "Ошибка получения ролей для пользователей: " << e.what() << "\n";
     }
 
     return resultStream.str();
@@ -485,11 +491,9 @@ string communicate_with_client(string& message, int client_socket_fd){
         if (command == "register"){
             string login;
             string passwd;
-            string role;
             getline(ss, login, '|');
             getline(ss, passwd, '|');
-            getline(ss, role, '|');
-            result = add_user(C, login, passwd, stoi(role));
+            result = add_user(C, login, passwd);
         }
         else if (command == "auth") {
             string login;
@@ -546,6 +550,9 @@ string communicate_with_client(string& message, int client_socket_fd){
             getline(ss, username, '|');
             getline(ss, userrole, '|');
             result = change_user_role(C, username, userrole);
+        }
+        else if (command =="roles_users") {
+            result = get_roles_for_users(C);
         }
         /*
         else if (command == "1") {
