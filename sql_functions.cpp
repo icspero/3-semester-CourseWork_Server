@@ -200,7 +200,7 @@ string add_topic(connection &C, const string &cipher_name, const string &descrip
                 W.commit();
                 answer = "Тема '" + cipher_name + "' уже существует, данные обновлены!\n";
             } else {
-                answer = "Тема '" + cipher_name + "' уже существует, изменений нет.\n";
+                answer = "Тема '" + cipher_name + "' уже существует, изменений нет!\n";
                 W.commit();
             }
             return answer;
@@ -269,11 +269,47 @@ string get_all_topics(connection &C) {
     result R = W.exec(sql);
 
     if (R.empty()) {
-        resultStream << "Темы не найдены!\n";
+        resultStream << "Темы не найдены\n";
     } else {
         for (auto row : R) {
             resultStream << row[0].as<string>() << "\n";  // список названий
         }
+    }
+
+    W.commit();
+    return resultStream.str();
+}
+
+// Получить описание темы
+string get_topic_description(connection &C, const string &cipher_name) {
+    stringstream resultStream;
+    work W(C);
+
+    string sql = "SELECT description FROM topics WHERE cipher_name = " + W.quote(cipher_name) +  ";";
+    result R = W.exec(sql);
+
+    if (R.empty()) {
+        resultStream << "Описание отсутствует\n";
+    } else {
+        resultStream << R[0][0].as<string>() << "\n";
+    }
+
+    W.commit();
+    return resultStream.str();
+}
+
+// Получить теорию по теме
+string get_topic_theory(connection &C, const string &cipher_name) {
+    stringstream resultStream;
+    work W(C);
+
+    string sql = "SELECT theory FROM topics WHERE cipher_name = " + W.quote(cipher_name) +  ";";
+    result R = W.exec(sql);
+
+    if (R.empty()) {
+        resultStream << "Теория отсутствует\n";
+    } else {
+        resultStream << R[0][0].as<string>() << "\n";
     }
 
     W.commit();
@@ -327,8 +363,8 @@ string get_tasks_for_topic(connection &C, const string &cipher_name) {
             "SELECT id FROM topics WHERE cipher_name = " + W.quote(cipher_name) + ";";
         result R_topic = W.exec(find_topic_sql);
 
-        if (cipher_name == "Темы не найдены!") {
-            resultStream << "Отсутствуют темы!\n";
+        if (cipher_name == "Темы не найдены") {
+            resultStream << "Отсутствуют темы\n";
             W.commit();
             return resultStream.str();
         }
@@ -362,6 +398,7 @@ string get_tasks_for_topic(connection &C, const string &cipher_name) {
     return resultStream.str();
 }
 
+// Удалить задание
 string delete_task(connection &C, int task_id) {
     string answer;
     work W(C);
@@ -391,6 +428,7 @@ string delete_task(connection &C, int task_id) {
     return answer;
 }
 
+// Получить список пользователей и их ролей
 string get_roles_for_users(connection &C) {
     stringstream resultStream;
     work W(C);
@@ -400,7 +438,7 @@ string get_roles_for_users(connection &C) {
         result R = W.exec(sql);
 
         if (R.empty()) {
-            resultStream << "Пользователи отсутствуют!\n";
+            resultStream << "Пользователи отсутствуют\n";
         } else {
             for (const auto &row : R) {
                 resultStream <<  "Логин: " << row[0].as<string>() << " <> Роль: " << row[1].as<string>() << "\n";
@@ -416,6 +454,7 @@ string get_roles_for_users(connection &C) {
     return resultStream.str();
 }
 
+// Получить список ролей
 string get_roles(connection &C) {
     stringstream resultStream;
     work W(C);
@@ -441,6 +480,7 @@ string get_roles(connection &C) {
     return resultStream.str();
 }
 
+// Получить список пользователей
 string get_users(connection &C) {
     stringstream resultStream;
     work W(C);
@@ -553,6 +593,16 @@ string communicate_with_client(string& message, int client_socket_fd){
         }
         else if (command =="roles_users") {
             result = get_roles_for_users(C);
+        }
+        else if (command == "get_topic_description") {
+            string cipher_name;
+            getline(ss, cipher_name, '|');
+            result = get_topic_description(C, cipher_name);
+        }
+        else if (command == "get_topic_theory") {
+            string cipher_name;
+            getline(ss, cipher_name, '|');
+            result = get_topic_theory(C, cipher_name);
         }
         /*
         else if (command == "1") {
