@@ -128,6 +128,33 @@ string authenticate_user(connection &C, const string &login, const string &passw
     return answer;
 }
 
+// Получить id пользователя
+string get_user_id(connection &C, const string &login) {
+    string answer;
+    work W(C);
+
+    try {
+        string check_sql = "SELECT id FROM users WHERE login = " + W.quote(login) + ";";
+        result R = W.exec(check_sql);
+        
+        if (R.empty()) {
+            answer = "Пользователь с таким логином не найден!\n";
+            W.commit();
+            return answer;
+        }
+        
+        string user_id = R[0][0].as<string>();
+        
+        answer = "ok|" + user_id;
+        W.commit();
+    } catch (const exception &e) {
+        W.abort();
+        answer = "Ошибка при получении id пользователя: " + string(e.what()) + "\n";
+    }
+    
+    return answer;
+}
+
 // Функция изменения роли пользователя
 string change_user_role(connection &C, const string &login, const string &new_role) {
     string answer;
@@ -428,29 +455,56 @@ string delete_task(connection &C, int task_id) {
     return answer;
 }
 
-// Получить список пользователей и их ролей
-string get_roles_for_users(connection &C) {
-    stringstream resultStream;
+// Получить правильный ответ по id задания
+string get_task_correct_answer(connection &C, const string &task_id) {
+    string answer;
     work W(C);
 
     try {
-        string sql = "SELECT u.login, r.role_name FROM users u JOIN roles r ON u.role_id = r.id;";
+        string sql = "SELECT correct_answer FROM tasks WHERE id = " + task_id + ";";
         result R = W.exec(sql);
-
+        
         if (R.empty()) {
-            resultStream << "Пользователи отсутствуют\n";
-        } else {
-            for (const auto &row : R) {
-                resultStream <<  "Логин: " << row[0].as<string>() << " <> Роль: " << row[1].as<string>() << "\n";
-            }
+            answer = "Верного ответа для задания с таким id нет!\n";
+            W.commit();
+            return answer;
         }
-
+        
+        string correct_answer = R[0][0].as<string>();
+        
+        answer = "ok|" + correct_answer;
         W.commit();
     } catch (const exception &e) {
         W.abort();
-        resultStream << "Ошибка получения ролей для пользователей: " << e.what() << "\n";
+        answer = "Ошибка при получении id пользователя: " + string(e.what()) + "\n";
+    }
+    
+    return answer;
+}
+
+// Получить список пользователей и их ролей
+string get_roles_users(connection &C, const string &role_name = "") {
+    stringstream resultStream;
+    work W(C);
+
+    string sql = "SELECT u.login, r.role_name FROM users u JOIN roles r ON u.role_id = r.id";
+    if (!role_name.empty()) {
+        sql += " WHERE r.role_name = " + W.quote(role_name);
+    }
+    sql += ";";
+
+    result R = W.exec(sql);
+    if (R.empty()) {
+        resultStream << "error|Пользователей нет!\n";
+    } else {
+        for (const auto &row : R) {
+            string login = row[0].as<string>();
+            string role = row[1].as<string>();
+            resultStream << login << "|" << role << "\n";
+        }
     }
 
+    W.commit();
     return resultStream.str();
 }
 
@@ -501,6 +555,76 @@ string get_users(connection &C) {
     } catch (const exception &e) {
         W.abort();
         resultStream << "Ошибка получения пользователей: " << e.what() << "\n";
+    }
+
+    return resultStream.str();
+}
+
+// Сохранить ответ на задание
+string save_result(connection &C, const string &user_id, const string& task_id, const string &is_correct, const string &user_answer) {
+    try {
+        work W(C);
+
+        string escaped_answer = W.quote(user_answer);
+
+        string sql = "INSERT INTO results (user_id, task_id, is_correct, user_answer) VALUES (" + user_id + ", " + task_id + ", " + is_correct + ", " + escaped_answer + ");";
+
+        W.exec(sql);
+        W.commit();
+
+    } catch (const exception &e) {
+        
+    }
+
+    return "ok";
+}
+
+// Получения результатов для пользователя
+string get_user_results(connection &C, const string &user_id, const string &topic_name = "") {
+    stringstream resultStream;
+    try {
+        work W(C);
+
+        string sql = "SELECT t.cipher_name, k.question, k.correct_answer, r.user_answer, r.is_correct "
+             "FROM results r "
+             "JOIN tasks k ON r.task_id = k.id "
+             "JOIN topics t ON k.topic_id = t.id "
+             "WHERE r.user_id = " + W.quote(user_id);
+
+        if (!topic_name.empty()) {
+            sql += " AND t.cipher_name = " + W.quote(topic_name);
+        }
+
+        sql += ";";
+
+        result R = W.exec(sql);
+
+        if (R.empty()) {
+            resultStream << "error|Результатов нет!\n";
+        } else {
+            auto sanitize = [](const string &s) {
+                string out = s;
+                out.erase(remove(out.begin(), out.end(), '\n'), out.end());
+                out.erase(remove(out.begin(), out.end(), '\r'), out.end());
+                replace(out.begin(), out.end(), '|', '/'); 
+                return out;
+            };
+
+            for (const auto &row : R) {
+                string topic = sanitize(row[0].as<string>());
+                string task_text = sanitize(row[1].as<string>());
+                string correct_answer = sanitize(row[2].as<string>());
+                string user_answer = sanitize(row[3].as<string>());
+                string is_correct = row[4].as<bool>() ? "TRUE" : "FALSE";
+
+                resultStream << topic << "|" << task_text << "|" << correct_answer
+                             << "|" << user_answer << "|" << is_correct << "\n";
+            }
+        }
+
+        W.commit();
+    } catch (const exception &e) {
+        resultStream << "error|Ошибка получения результатов: " << e.what() << "\n";
     }
 
     return resultStream.str();
@@ -592,7 +716,9 @@ string communicate_with_client(string& message, int client_socket_fd){
             result = change_user_role(C, username, userrole);
         }
         else if (command =="roles_users") {
-            result = get_roles_for_users(C);
+            string role;
+            getline(ss, role, '|');
+            result = get_roles_users(C, role);
         }
         else if (command == "get_topic_description") {
             string cipher_name;
@@ -603,6 +729,31 @@ string communicate_with_client(string& message, int client_socket_fd){
             string cipher_name;
             getline(ss, cipher_name, '|');
             result = get_topic_theory(C, cipher_name);
+        }
+        else if (command == "get_user_id") {
+            string login;
+            getline(ss, login, '|');
+            result = get_user_id(C, login);
+        }
+        else if (command == "get_task_correct_answer") {
+            string task_id;
+            getline(ss, task_id, '|');
+            result = get_task_correct_answer(C, task_id);
+        }
+        else if (command == "save_result") {
+            string user_id, task_id, is_correct, user_answer;
+            getline(ss, user_id, '|');
+            getline(ss, task_id, '|');
+            getline(ss, is_correct, '|');
+            getline(ss, user_answer, '|');
+            result = save_result(C, user_id, task_id, is_correct, user_answer);
+        }
+        else if (command == "get_user_results") {
+            string user_id;
+            string topic;
+            getline(ss, user_id, '|');
+            getline(ss, topic, '|');
+            result = get_user_results(C, user_id, topic);
         }
         /*
         else if (command == "1") {
