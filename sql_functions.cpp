@@ -57,75 +57,94 @@ string add_first_admin(connection &C) {
 
 // Функция создания пользователей
 string add_user(connection &C, const string &login, const string &password) {
-    string answer;
-    work W(C);
-
-    string check = "SELECT COUNT(*) FROM users WHERE login = " + W.quote(login) + ";";
-    result R = W.exec(check);
-    int user_exists = R[0][0].as<int>();
-
-    if (user_exists > 0) { 
-        answer = "Пользователь " + login + " уже существует!\n";
-        W.commit();
-        return answer;
-    }
-
-    string get_role = "SELECT id FROM roles WHERE role_name = 'Посетитель';";
-    result R2 = W.exec(get_role);
-    int role_id = R2[0][0].as<int>();
-
-    string passwd_hash = sha256(password);
-    string insert_query = "INSERT INTO users (role_id, login, passwd_hash) VALUES (" + to_string(role_id) + ", " + W.quote(login) + ", " + W.quote(passwd_hash) + ");";
-
     try {
-        W.exec(insert_query);
-        W.commit();
-        answer = "Пользователь " + login + " успешно создан!\n";
-    } catch (const exception &e) {
-        W.abort();
-        answer = "Ошибка создания пользователя: " + string(e.what()) + "\n";
-    }
+        work W(C);
 
-    return answer;
+        // Проверяем существование пользователя
+        result R = W.exec_params(
+            "SELECT COUNT(*) FROM users WHERE login = $1",
+            login
+        );
+
+        if (R[0][0].as<int>() > 0) {
+            W.commit();
+            return "Пользователь " + login + " уже существует!\n";
+        }
+
+        result R2 = W.exec(
+            "SELECT id FROM roles WHERE role_name = 'Посетитель'"
+        );
+
+        if (R2.empty()) {
+            W.commit();
+            return "Ошибка: роль 'Посетитель' не найдена!\n";
+        }
+
+        int role_id = R2[0][0].as<int>();
+
+        string passwd_hash = sha256(password);
+
+        W.exec_params(
+            "INSERT INTO users (role_id, login, passwd_hash) "
+            "VALUES ($1, $2, $3)",
+            role_id,
+            login,
+            passwd_hash
+        );
+
+        W.commit();
+        return "Пользователь " + login + " успешно создан!\n";
+    }
+    catch (const exception &e) {
+        return string("Ошибка создания пользователя: ") + e.what() + "\n";
+    }
 }
 
 // Функция аутентификации пользователя
 string authenticate_user(connection &C, const string &login, const string &password) {
-    string answer;
-    work W(C);
-
     try {
-        string check = "SELECT passwd_hash, role_id FROM users WHERE login = " + W.quote(login) + ";";
-        result R1 = W.exec(check);
+        work W(C);
+
+        // Получаем хеш пароля и роль
+        result R1 = W.exec_params(
+            "SELECT passwd_hash, role_id FROM users WHERE login = $1",
+            login
+        );
 
         if (R1.empty()) {
-            answer = "Пользователь с логином " + login + " не существует!\n";
             W.commit();
-            return answer;
+            return "Пользователь с логином " + login + " не существует!\n";
         }
 
-        string input_hash = sha256(password);
         string db_hash = R1[0][0].as<string>();
         int role_id = R1[0][1].as<int>();
 
-        string check_role = "SELECT role_name FROM roles WHERE id = " + W.quote(role_id) + ";";
-        result R2 = W.exec(check_role);
-        string role_name = R2[0][0].as<string>();
+        string input_hash = sha256(password);
 
-        // Сравниваем пароли
-        if (db_hash == input_hash) {
-            answer = "Вход под ролью: " + role_name + "!\n";
-        } else {
-            answer = "Неверный пароль!\n";
+        if (db_hash != input_hash) {
+            W.commit();
+            return "Неверный пароль!\n";
         }
 
-        W.commit();
-    } catch (const exception &e) {
-        W.abort();
-        answer = "Ошибка при аутентификации пользователя: " + string(e.what()) + "\n";
-    }
+        // Получаем название роли
+        result R2 = W.exec_params(
+            "SELECT role_name FROM roles WHERE id = $1",
+            role_id
+        );
 
-    return answer;
+        if (R2.empty()) {
+            W.commit();
+            return "Ошибка: роль не найдена!\n";
+        }
+
+        string role_name = R2[0][0].as<string>();
+
+        W.commit();
+        return "Вход под ролью: " + role_name + "!\n";
+    }
+    catch (const exception &e) {
+        return string("Ошибка при аутентификации пользователя: ") + e.what() + "\n";
+    }
 }
 
 // Получить id пользователя
@@ -157,47 +176,57 @@ string get_user_id(connection &C, const string &login) {
 
 // Функция изменения роли пользователя
 string change_user_role(connection &C, const string &login, const string &new_role) {
-    string answer;
-    work W(C);
-    
     try {
-        // Проверяем текущую роль пользователя
-        string check_sql = "SELECT role_id FROM users WHERE login = " + W.quote(login) + ";";
-        result R = W.exec(check_sql);
-        
-        if (R.empty()) {
-            answer = "Пользователь с таким логином не найден!\n";
+        work W(C);
+
+        // Получаем текущую роль пользователя
+        result R1 = W.exec_params(
+            "SELECT u.role_id, r.role_name "
+            "FROM users u "
+            "JOIN roles r ON u.role_id = r.id "
+            "WHERE u.login = $1",
+            login
+        );
+
+        if (R1.empty()) {
             W.commit();
-            return answer;
-        }
-        
-        int role_id = R[0][0].as<int>(); // текущая роль пользователя
-        string check_role = "SELECT role_name FROM roles WHERE id = " + W.quote(role_id) + ";";
-        result R2 = W.exec(check_role);
-        string current_role = R2[0][0].as<string>();
-        
-        if (current_role == new_role) {
-            answer = "У пользователя уже установлена роль '" + new_role + "'!\n";
-            W.commit();
-            return answer;
+            return "Пользователь с таким логином не найден!\n";
         }
 
-        string check_new_role_id = "SELECT id FROM roles WHERE role_name = " + W.quote(new_role) + ";";
-        result R3 = W.exec(check_new_role_id);
-        string new_role_id = R3[0][0].as<string>();
+        int current_role_id = R1[0][0].as<int>();
+        string current_role_name = R1[0][1].as<string>();
+
+        if (current_role_name == new_role) {
+            W.commit();
+            return "У пользователя уже установлена роль '" + new_role + "'!\n";
+        }
+
+        // Получаем id новой роли
+        result R2 = W.exec_params(
+            "SELECT id FROM roles WHERE role_name = $1",
+            new_role
+        );
+
+        if (R2.empty()) {
+            W.commit();
+            return "Роль '" + new_role + "' не найдена!\n";
+        }
+
+        int new_role_id = R2[0][0].as<int>();
 
         // Обновляем роль
-        string update_sql = "UPDATE users SET role_id = " + W.quote(new_role_id) + " WHERE login = " + W.quote(login) + ";";
-        W.exec(update_sql);
+        W.exec_params(
+            "UPDATE users SET role_id = $1 WHERE login = $2",
+            new_role_id,
+            login
+        );
+
         W.commit();
-        
-        answer = "Роль пользователя успешно изменена на '" + new_role + "'!\n";
-    } catch (const exception &e) {
-        W.abort();
-        answer = "Ошибка при изменении роли пользователя: " + string(e.what()) + "\n";
+        return "Роль пользователя успешно изменена на '" + new_role + "'!\n";
     }
-    
-    return answer;
+    catch (const exception &e) {
+        return "Ошибка при изменении роли пользователя: " + string(e.what()) + "\n";
+    }
 }
 
 // Добавление темы
@@ -255,32 +284,31 @@ string add_topic(connection &C, const string &cipher_name, const string &descrip
 // Удаление темы
 string delete_topic(connection &C, const string &cipher_name) {
     string answer;
-    work W(C);
-
     try {
-        // Проверяем, существует ли тема
-        string check_query =
-            "SELECT id FROM topics WHERE cipher_name = " + W.quote(cipher_name) + ";";
+        work W(C);
 
-        result R = W.exec(check_query);
+        // Находим id темы
+        result R = W.exec_params(
+            "SELECT id FROM topics WHERE cipher_name = $1",
+            cipher_name
+        );
 
         if (R.empty()) {
-            answer = "Тема '" + cipher_name + "' не найдена!\n";
             W.commit();
-            return answer;
+            return "Тема '" + cipher_name + "' не найдена!\n";
         }
 
         int topic_id = R[0][0].as<int>();
 
-        string delete_query = "DELETE FROM topics WHERE id = " + to_string(topic_id) + ";";
+        // Удаляем тему по id
+        W.exec_params(
+            "DELETE FROM topics WHERE id = $1",
+            topic_id
+        );
 
-        W.exec(delete_query);
         W.commit();
-
-        answer = "Тема '" + cipher_name + "' успешна удалена!\n";
-    }
-    catch (const exception &e) {
-        W.abort();
+        answer = "Тема '" + cipher_name + "' успешно удалена!\n";
+    } catch (const exception &e) {
         answer = "Ошибка удаления темы: " + string(e.what()) + "\n";
     }
 
@@ -299,7 +327,7 @@ string get_all_topics(connection &C) {
         resultStream << "Темы не найдены\n";
     } else {
         for (auto row : R) {
-            resultStream << row[0].as<string>() << "\n";  // список названий
+            resultStream << row[0].as<string>() << "\n";
         }
     }
 
@@ -346,33 +374,34 @@ string get_topic_theory(connection &C, const string &cipher_name) {
 // Добавить задание для темы
 string add_task(connection &C, const string &cipher_name, const string &question, const string &correct_answer) {
     string answer;
-    work W(C);
-
     try {
+        work W(C);
+
         // Находим topic_id по названию темы
-        string find_topic_sql = "SELECT id FROM topics WHERE cipher_name = " + W.quote(cipher_name) + ";";
-        result R = W.exec(find_topic_sql);
+        result R = W.exec_params(
+            "SELECT id FROM topics WHERE cipher_name = $1",
+            cipher_name
+        );
 
         if (R.empty()) {
-            answer = "Тема '" + cipher_name + "' не найдена!\n";
             W.commit();
-            return answer;
+            return "Тема '" + cipher_name + "' не найдена!\n";
         }
 
         int topic_id = R[0][0].as<int>();
 
-        // Вставляем новую задачу
-        string insert_sql = "INSERT INTO tasks (topic_id, question, correct_answer) VALUES ("
-                            + to_string(topic_id) + ", "
-                            + W.quote(question) + ", "
-                            + W.quote(correct_answer) + ");";
+        // Вставляем новую задачу с использованием параметров
+        W.exec_params(
+            "INSERT INTO tasks (topic_id, question, correct_answer) VALUES ($1, $2, $3)",
+            topic_id,
+            question,
+            correct_answer
+        );
 
-        W.exec(insert_sql);
         W.commit();
         answer = "Задание добавлено успешно для темы '" + cipher_name + "'!\n";
 
     } catch (const exception &e) {
-        W.abort();
         answer = "Ошибка добавления задания: " + string(e.what()) + "\n";
     }
 
@@ -382,19 +411,22 @@ string add_task(connection &C, const string &cipher_name, const string &question
 // Получить все задания для темы
 string get_tasks_for_topic(connection &C, const string &cipher_name) {
     stringstream resultStream;
-    work W(C);
 
     try {
+        work W(C);
+
         // Находим topic_id по названию темы
-        string find_topic_sql =
-            "SELECT id FROM topics WHERE cipher_name = " + W.quote(cipher_name) + ";";
-        result R_topic = W.exec(find_topic_sql);
+        result R_topic = W.exec_params(
+            "SELECT id FROM topics WHERE cipher_name = $1",
+            cipher_name
+        );
 
         if (cipher_name == "Темы не найдены") {
             resultStream << "Отсутствуют темы\n";
             W.commit();
             return resultStream.str();
         }
+
         if (R_topic.empty()) {
             resultStream << "Тема '" << cipher_name << "' не найдена!\n";
             W.commit();
@@ -403,9 +435,11 @@ string get_tasks_for_topic(connection &C, const string &cipher_name) {
 
         int topic_id = R_topic[0][0].as<int>();
 
-        // Получаем все задания темы
-        string get_tasks_sql = "SELECT id, question FROM tasks WHERE topic_id = " + to_string(topic_id) + " ORDER BY id;";
-        result R_tasks = W.exec(get_tasks_sql);
+        // Получаем все задания темы с использованием параметров
+        result R_tasks = W.exec_params(
+            "SELECT id, question FROM tasks WHERE topic_id = $1 ORDER BY id",
+            topic_id
+        );
 
         if (R_tasks.empty()) {
             resultStream << "Для темы '" << cipher_name << "' заданий нет!\n";
@@ -418,7 +452,6 @@ string get_tasks_for_topic(connection &C, const string &cipher_name) {
         W.commit();
 
     } catch (const exception &e) {
-        W.abort();
         resultStream << "Ошибка получения заданий: " << e.what() << "\n";
     }
 
@@ -432,8 +465,10 @@ string delete_task(connection &C, int task_id) {
 
     try {
         // Проверяем, существует ли задание
-        string check_sql = "SELECT COUNT(*) FROM tasks WHERE id = " + to_string(task_id) + ";";
-        result R = W.exec(check_sql);
+        result R = W.exec_params(
+            "SELECT COUNT(*) FROM tasks WHERE id = $1;",
+            to_string(task_id)
+        );
 
         if (R[0][0].as<int>() == 0) {
             answer = "Задание с ID " + to_string(task_id) + " не найдено!\n";
@@ -441,8 +476,11 @@ string delete_task(connection &C, int task_id) {
             return answer;
         }
 
-        string delete_sql = "DELETE FROM tasks WHERE id = " + to_string(task_id) + ";";
-        W.exec(delete_sql);
+        // Удаляем задание
+        W.exec_params(
+            "DELETE FROM tasks WHERE id = $1;",
+            to_string(task_id)
+        );
 
         W.commit();
         answer = "Задание с ID " + to_string(task_id) + " успешно удалено!\n";
@@ -461,50 +499,57 @@ string get_task_correct_answer(connection &C, const string &task_id) {
     work W(C);
 
     try {
-        string sql = "SELECT correct_answer FROM tasks WHERE id = " + task_id + ";";
-        result R = W.exec(sql);
-        
+        // Используем exec_params для безопасной подстановки параметра
+        result R = W.exec_params(
+            "SELECT correct_answer FROM tasks WHERE id = $1;",
+            task_id
+        );
+
         if (R.empty()) {
             answer = "Верного ответа для задания с таким id нет!\n";
             W.commit();
             return answer;
         }
-        
+
         string correct_answer = R[0][0].as<string>();
-        
         answer = "ok|" + correct_answer;
+
         W.commit();
     } catch (const exception &e) {
         W.abort();
-        answer = "Ошибка при получении id пользователя: " + string(e.what()) + "\n";
+        answer = "Ошибка при получении ответа задания: " + string(e.what()) + "\n";
     }
-    
+
     return answer;
 }
 
 // Получить список пользователей и их ролей
-string get_roles_users(connection &C, const string &role_name = "") {
+string get_roles_users(connection &C, const string &role_name) {
     stringstream resultStream;
     work W(C);
-
-    string sql = "SELECT u.login, r.role_name FROM users u JOIN roles r ON u.role_id = r.id";
-    if (!role_name.empty()) {
-        sql += " WHERE r.role_name = " + W.quote(role_name);
-    }
-    sql += ";";
-
-    result R = W.exec(sql);
-    if (R.empty()) {
-        resultStream << "error|Пользователей нет!\n";
-    } else {
-        for (const auto &row : R) {
-            string login = row[0].as<string>();
-            string role = row[1].as<string>();
-            resultStream << login << "|" << role << "\n";
+    try {
+        string sql = "SELECT u.login, r.role_name FROM users u JOIN roles r ON u.role_id = r.id";
+        if (!role_name.empty()) {
+            sql += " WHERE r.role_name = " + W.quote(role_name);
         }
-    }
+        sql += ";";
 
-    W.commit();
+        result R = W.exec(sql);
+        if (R.empty()) {
+            resultStream << "error|Пользователей нет!\n";
+        } else {
+            for (const auto &row : R) {
+                string login = row[0].as<string>();
+                string role = row[1].as<string>();
+                resultStream << login << "|" << role << "\n";
+            }
+        }
+
+        W.commit();
+    } catch (const exception &e) {
+        W.abort();
+        resultStream << "Ошибка получения пользователей и их ролей: " << e.what() << "\n";
+    }
     return resultStream.str();
 }
 
@@ -532,6 +577,33 @@ string get_roles(connection &C) {
     }
 
     return resultStream.str();
+}
+
+// Получить роль по id
+string get_role(connection &C, const string &user_id) {
+    string res;
+    work W(C);
+
+    try {
+        result R = W.exec_params(
+            "SELECT r.role_name FROM roles r "
+            "JOIN users u ON u.role_id = r.id WHERE u.id = $1;",
+            user_id
+        );
+
+        if (R.empty()) {
+            res = "Роль по user_id не найдена!\n";
+        } else {
+            res = R[0][0].as<string>() + "\n";
+        }
+
+        W.commit();
+    } catch (const exception &e) {
+        W.abort();
+        res = "Ошибка получения роли: " + string(e.what()) + "\n";
+    }
+
+    return res;
 }
 
 // Получить список пользователей
@@ -565,39 +637,52 @@ string save_result(connection &C, const string &user_id, const string& task_id, 
     try {
         work W(C);
 
-        string escaped_answer = W.quote(user_answer);
-
-        string sql = "INSERT INTO results (user_id, task_id, is_correct, user_answer) VALUES (" + user_id + ", " + task_id + ", " + is_correct + ", " + escaped_answer + ");";
-
-        W.exec(sql);
+        W.exec_params(
+            "INSERT INTO results (user_id, task_id, is_correct, user_answer) "
+            "VALUES ($1, $2, $3, $4)",
+            user_id,
+            task_id,
+            is_correct,
+            user_answer
+        );
         W.commit();
 
     } catch (const exception &e) {
-        
+        return e.what();
     }
 
     return "ok";
 }
 
-// Получения результатов для пользователя
-string get_user_results(connection &C, const string &user_id, const string &topic_name = "") {
+// Получение результатов для пользователя
+string get_user_results(connection &C, const string &user_id, const string &topic_name) {
     stringstream resultStream;
     try {
         work W(C);
 
-        string sql = "SELECT t.cipher_name, k.question, k.correct_answer, r.user_answer, r.is_correct "
-             "FROM results r "
-             "JOIN tasks k ON r.task_id = k.id "
-             "JOIN topics t ON k.topic_id = t.id "
-             "WHERE r.user_id = " + W.quote(user_id);
+        result R;
 
-        if (!topic_name.empty()) {
-            sql += " AND t.cipher_name = " + W.quote(topic_name);
+        if (topic_name.empty()) {
+            // Без фильтра по теме
+            R = W.exec_params(
+                "SELECT t.cipher_name, k.question, k.correct_answer, r.user_answer, r.is_correct "
+                "FROM results r "
+                "JOIN tasks k ON r.task_id = k.id "
+                "JOIN topics t ON k.topic_id = t.id "
+                "WHERE r.user_id = $1;",
+                user_id
+            );
+        } else {
+            // С фильтром по теме
+            R = W.exec_params(
+                "SELECT t.cipher_name, k.question, k.correct_answer, r.user_answer, r.is_correct "
+                "FROM results r "
+                "JOIN tasks k ON r.task_id = k.id "
+                "JOIN topics t ON k.topic_id = t.id "
+                "WHERE r.user_id = $1 AND t.cipher_name = $2;",
+                user_id, topic_name
+            );
         }
-
-        sql += ";";
-
-        result R = W.exec(sql);
 
         if (R.empty()) {
             resultStream << "error|Результатов нет!\n";
@@ -606,7 +691,70 @@ string get_user_results(connection &C, const string &user_id, const string &topi
                 string out = s;
                 out.erase(remove(out.begin(), out.end(), '\n'), out.end());
                 out.erase(remove(out.begin(), out.end(), '\r'), out.end());
-                replace(out.begin(), out.end(), '|', '/'); 
+                replace(out.begin(), out.end(), '|', '/');
+                return out;
+            };
+
+            for (const auto &row : R) {
+                string topic = sanitize(row[0].as<string>());
+                string task_text = sanitize(row[1].as<string>());
+                string correct_answer = sanitize(row[2].as<string>());
+                string user_answer = sanitize(row[3].as<string>());
+                string is_correct = row[4].as<bool>() ? "TRUE" : "FALSE";
+
+                resultStream << topic << "|" << task_text << "|" << correct_answer
+                             << "|" << user_answer << "|" << is_correct << "\n";
+            }
+        }
+
+        W.commit();
+    } catch (const exception &e) {
+        resultStream << "error|Ошибка получения результатов: " << e.what() << "\n";
+    }
+
+    return resultStream.str();
+}
+
+// Получение результатов пользователя по логину
+string get_user_results_for_admin(connection &C, const string &user_login, const string &topic_name) {
+    stringstream resultStream;
+    try {
+        work W(C);
+
+        result R;
+
+        if (topic_name.empty()) {
+            // Без фильтра по теме
+            R = W.exec_params(
+                "SELECT t.cipher_name, k.question, k.correct_answer, r.user_answer, r.is_correct "
+                "FROM results r "
+                "JOIN tasks k ON r.task_id = k.id "
+                "JOIN topics t ON k.topic_id = t.id "
+                "JOIN users u ON r.user_id = u.id "
+                "WHERE u.login = $1;",
+                user_login
+            );
+        } else {
+            // С фильтром по теме
+            R = W.exec_params(
+                "SELECT t.cipher_name, k.question, k.correct_answer, r.user_answer, r.is_correct "
+                "FROM results r "
+                "JOIN tasks k ON r.task_id = k.id "
+                "JOIN topics t ON k.topic_id = t.id "
+                "JOIN users u ON r.user_id = u.id "
+                "WHERE u.login = $1 AND t.cipher_name = $2;",
+                user_login, topic_name
+            );
+        }
+
+        if (R.empty()) {
+            resultStream << "error|Результатов нет!\n";
+        } else {
+            auto sanitize = [](const string &s) {
+                string out = s;
+                out.erase(remove(out.begin(), out.end(), '\n'), out.end());
+                out.erase(remove(out.begin(), out.end(), '\r'), out.end());
+                replace(out.begin(), out.end(), '|', '/');
                 return out;
             };
 
@@ -648,6 +796,7 @@ string communicate_with_client(string& message, int client_socket_fd){
     string result;
     stringstream ss(message);
     string command;
+
     // Разделяем сообщение по '|'
     getline(ss, command, '|');
     try {
@@ -685,6 +834,11 @@ string communicate_with_client(string& message, int client_socket_fd){
         }
         else if (command == "get_roles") {
             result = get_roles(C);
+        }
+        else if (command == "get_role") {
+            string user_id;
+            getline(ss, user_id, '|');
+            result = get_role(C, user_id);
         }
         else if (command == "get_users") {
             result = get_users(C);
@@ -755,68 +909,13 @@ string communicate_with_client(string& message, int client_socket_fd){
             getline(ss, topic, '|');
             result = get_user_results(C, user_id, topic);
         }
-        /*
-        else if (command == "1") {
-            string shopName;
-            string shopAddress;
-            // Получаем название и адрес магазина
-            getline(ss, shopName, '|');
-            getline(ss, shopAddress, '|');
-            result = add_shop(C, shopName, shopAddress);
-        } else if (command == "2"){
-            string shopName;
-            string shopAddress;
-            string productName;
-            string cost;
-            string count;
-
-            getline(ss, shopName, '|');
-            getline(ss, shopAddress, '|');
-            getline(ss, productName, '|');
-            getline(ss, cost, '|');
-            getline(ss, count, '|');
-
-            double price;
-            int quantity;
-            if (isValidDouble(cost)){
-                price = stringToDouble(cost);
-            }
-            else{
-                result = "Ошибка: Неккоректный ввод стоимости\n";
-                return result;
-            }
-            if (isValidNumber(count)){
-                quantity = stringToInt(count);
-            }
-            else{
-                result = "Ошибка: Неккоректный ввод количества\n";
-                return result;
-            }
-            result = add_product_to_shop(C, shopName, shopAddress, productName, price, quantity);
-        } else if (command == "3"){
-            string shopName;
-            getline(ss, shopName, '|');
-            result = find_shop_addresses(C, shopName);
-        } else if (command == "4"){
-            string productName;
-            getline(ss, productName, '|');
-            result = find_product(C, productName);
-        } else if (command == "5"){
-            string shopName;
-            string shopAddress;
-            // Получаем название и адрес магазина
-            getline(ss, shopName, '|');
-            getline(ss, shopAddress, '|');
-            result = delete_shop(C, shopName, shopAddress);
-        } else if (command == "6"){
-            string shopName;
-            string shopAddress;
-            string productName;
-            getline(ss, shopName, '|');
-            getline(ss, shopAddress, '|');
-            getline(ss, productName, '|');
-            result = delete_product_from_shop(C, shopName, productName, shopAddress);
-        } */
+        else if (command == "get_user_results_for_admin") {
+            string user_login;
+            string topic;
+            getline(ss, user_login, '|');
+            getline(ss, topic, '|');
+            result = get_user_results_for_admin(C, user_login, topic);
+        }
         else {
             result = "Ошибка: неизвестная команда!\n";
         }
