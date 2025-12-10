@@ -1,1 +1,0 @@
-g++ server.cpp sql_functions.cpp -o SERVER -lpqxx -lpq -lcrypto

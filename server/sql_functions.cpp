@@ -181,7 +181,7 @@ string change_user_role(connection &C, const string &login, const string &new_ro
 
         // Получаем текущую роль пользователя
         result R1 = W.exec_params(
-            "SELECT u.role_id, r.role_name "
+            "SELECT u.role_id, r.role_name, u.login "
             "FROM users u "
             "JOIN roles r ON u.role_id = r.id "
             "WHERE u.login = $1",
@@ -195,6 +195,12 @@ string change_user_role(connection &C, const string &login, const string &new_ro
 
         int current_role_id = R1[0][0].as<int>();
         string current_role_name = R1[0][1].as<string>();
+        string login = R1[0][2].as<string>();
+
+        if (login == "admin1") {
+            W.commit();
+            return "Нельзя изменить роль у главного администратора!\n";
+        }
 
         if (current_role_name == new_role) {
             W.commit();
@@ -665,7 +671,7 @@ string get_user_results(connection &C, const string &user_id, const string &topi
         if (topic_name.empty()) {
             // Без фильтра по теме
             R = W.exec_params(
-                "SELECT t.cipher_name, k.question, k.correct_answer, r.user_answer, r.is_correct "
+                "SELECT t.cipher_name, k.question, k.correct_answer, r.user_answer, r.is_correct, r.id "
                 "FROM results r "
                 "JOIN tasks k ON r.task_id = k.id "
                 "JOIN topics t ON k.topic_id = t.id "
@@ -675,7 +681,7 @@ string get_user_results(connection &C, const string &user_id, const string &topi
         } else {
             // С фильтром по теме
             R = W.exec_params(
-                "SELECT t.cipher_name, k.question, k.correct_answer, r.user_answer, r.is_correct "
+                "SELECT t.cipher_name, k.question, k.correct_answer, r.user_answer, r.is_correct, r.id "
                 "FROM results r "
                 "JOIN tasks k ON r.task_id = k.id "
                 "JOIN topics t ON k.topic_id = t.id "
@@ -696,14 +702,16 @@ string get_user_results(connection &C, const string &user_id, const string &topi
             };
 
             for (const auto &row : R) {
+                
                 string topic = sanitize(row[0].as<string>());
                 string task_text = sanitize(row[1].as<string>());
                 string correct_answer = sanitize(row[2].as<string>());
                 string user_answer = sanitize(row[3].as<string>());
                 string is_correct = row[4].as<bool>() ? "TRUE" : "FALSE";
+                string id = sanitize(row[5].as<string>());
 
                 resultStream << topic << "|" << task_text << "|" << correct_answer
-                             << "|" << user_answer << "|" << is_correct << "\n";
+                             << "|" << user_answer << "|" << is_correct << "|" << id << "\n";
             }
         }
 
@@ -726,7 +734,7 @@ string get_user_results_for_admin(connection &C, const string &user_login, const
         if (topic_name.empty()) {
             // Без фильтра по теме
             R = W.exec_params(
-                "SELECT t.cipher_name, k.question, k.correct_answer, r.user_answer, r.is_correct "
+                "SELECT t.cipher_name, k.question, k.correct_answer, r.user_answer, r.is_correct, r.id "
                 "FROM results r "
                 "JOIN tasks k ON r.task_id = k.id "
                 "JOIN topics t ON k.topic_id = t.id "
@@ -737,7 +745,7 @@ string get_user_results_for_admin(connection &C, const string &user_login, const
         } else {
             // С фильтром по теме
             R = W.exec_params(
-                "SELECT t.cipher_name, k.question, k.correct_answer, r.user_answer, r.is_correct "
+                "SELECT t.cipher_name, k.question, k.correct_answer, r.user_answer, r.is_correct, r.id "
                 "FROM results r "
                 "JOIN tasks k ON r.task_id = k.id "
                 "JOIN topics t ON k.topic_id = t.id "
@@ -764,9 +772,10 @@ string get_user_results_for_admin(connection &C, const string &user_login, const
                 string correct_answer = sanitize(row[2].as<string>());
                 string user_answer = sanitize(row[3].as<string>());
                 string is_correct = row[4].as<bool>() ? "TRUE" : "FALSE";
+                string id = sanitize(row[5].as<string>());
 
                 resultStream << topic << "|" << task_text << "|" << correct_answer
-                             << "|" << user_answer << "|" << is_correct << "\n";
+                             << "|" << user_answer << "|" << is_correct << "|" << id << "\n";
             }
         }
 
@@ -778,10 +787,41 @@ string get_user_results_for_admin(connection &C, const string &user_login, const
     return resultStream.str();
 }
 
+// Функция удаления результатов пользователя по id результата
+string delete_results(connection &C, const string &results_id) {
+    if (results_id.empty()) return "error|Список id результатов пустой!";
+
+    try {
+        work W(C);
+        set<string> res_id;
+
+        stringstream ss(results_id);
+        string token;
+        while (getline(ss, token, ',')) {
+            try { res_id.insert(token); } catch (...) {}
+        }
+
+        if (res_id.empty()) return "error|Нет корректных ID результатов!";
+
+        for (string res : res_id) {
+            W.exec_params(
+                "DELETE FROM results WHERE id = $1",
+                res
+            );
+        }
+
+        W.commit();
+        return "ok|Результаты успешно удалены!";
+    }
+    catch (const exception &e) {
+        return string("error|Ошибка при удалении результатов: ") + e.what();
+    }
+}
+
 string before_login(){
     string result;
     try{
-        connection C("dbname=coursework user=postgres password=root host=localhost port=5432");
+        connection C("dbname=coursework user=postgres password=root host=db port=5432");
         result = add_first_admin(C);
     }
     catch (const exception &e) {
@@ -800,7 +840,7 @@ string communicate_with_client(string& message, int client_socket_fd){
     // Разделяем сообщение по '|'
     getline(ss, command, '|');
     try {
-        connection C("dbname=coursework user=postgres password=root host=localhost port=5432");
+        connection C("dbname=coursework user=postgres password=root host=db port=5432");
         if (command == "register"){
             string login;
             string passwd;
@@ -915,6 +955,11 @@ string communicate_with_client(string& message, int client_socket_fd){
             getline(ss, user_login, '|');
             getline(ss, topic, '|');
             result = get_user_results_for_admin(C, user_login, topic);
+        }
+        else if (command == "delete_results") {
+            string results;
+            getline(ss, results, '|');
+            result = delete_results(C, results);
         }
         else {
             result = "Ошибка: неизвестная команда!\n";

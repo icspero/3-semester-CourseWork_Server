@@ -1,11 +1,13 @@
 #define HEADER_H
 
 #include <iostream>
+#include <cstring>
+#include <set>
+
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <memory>
-#include <cstring>
 #include <thread>
 
 #include <pqxx/pqxx>
@@ -45,3 +47,4 @@ string get_tasks_for_topic(connection &C, const string &cipher_name);
 string get_task_correct_answer(connection &C, const string &task_id);
 
 string save_result(connection &C, const string &user_id, const string& task_id, const string &is_correct, const string &user_answer);
+string delete_results(connection &C, const string &results_id);
