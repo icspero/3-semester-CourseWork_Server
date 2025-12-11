@@ -1,5 +1,6 @@
 #include "header.h"
 
+// Хеширование пароля 
 string sha256(const string &password) {
     EVP_MD_CTX *mdctx = EVP_MD_CTX_new(); // создаем контекст для хеширования
     const EVP_MD *md = EVP_sha256(); // алгоритм sha256

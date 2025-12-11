@@ -5,10 +5,10 @@ using namespace std;
 const int PORT = 8080;
 
 // RAII-класс для автоматического закрытия сокета при выходе из области видимости
-class SocketRAII {
+class RAII {
 public:
-    SocketRAII(int fd) : fd_(fd) {}
-    ~SocketRAII() {
+    RAII(int fd) : fd_(fd) {}
+    ~RAII() {
         if (close(fd_) < 0) {
             cerr << "Ошибка при закрытии сокета!" << endl;
         }
@@ -19,7 +19,7 @@ private:
 };
 
 // Функция обработки подключённого клиента в отдельном потоке
-void handle_client(shared_ptr<SocketRAII> client_socket) {
+void handle_client(shared_ptr<RAII> client_socket) {
     cout << "Клиент подключился!" << endl;
 
     // Создаем буфер на 1024 байт 
@@ -52,7 +52,7 @@ void handle_client(shared_ptr<SocketRAII> client_socket) {
 
 void start_server() {
     // Создаём TCP-сокет
-    SocketRAII server_socket(socket(AF_INET, SOCK_STREAM, 0));
+    RAII server_socket(socket(AF_INET, SOCK_STREAM, 0));
     if (server_socket.get() < 0) {
         throw runtime_error("Ошибка создания сокета!");
     }
@@ -90,7 +90,7 @@ void start_server() {
             continue;
         }
 
-        auto client_socket = make_shared<SocketRAII>(new_socket); // создаем умный указатель на сокет
+        auto client_socket = make_shared<RAII>(new_socket); // создаем умный указатель на сокет
         thread client_thread(handle_client, client_socket);
         client_thread.detach(); // поток работает независимо от основного
     }
