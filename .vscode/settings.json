@@ -1,9 +1,0 @@
-{
-    "files.associations": {
-        "optional": "cpp",
-        "variant": "cpp",
-        "string": "cpp",
-        "array": "cpp",
-        "iosfwd": "cpp"
-    }
-}
