@@ -478,7 +478,7 @@ string delete_task(connection &C, int task_id) {
         );
 
         if (R[0][0].as<int>() == 0) {
-            answer = "Задание с ID " + to_string(task_id) + " не найдено!\n";
+            answer = "Задание не найдено на сервере!\n";
             W.commit();
             return answer;
         }
@@ -490,7 +490,7 @@ string delete_task(connection &C, int task_id) {
         );
 
         W.commit();
-        answer = "Задание с ID " + to_string(task_id) + " успешно удалено!\n";
+        answer = "Задание успешно удалено!\n";
 
     } catch (const exception &e) {
         W.abort();
